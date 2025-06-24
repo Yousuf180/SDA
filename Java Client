@@ -1,0 +1,94 @@
+using System;
+using System.IO;
+using System.Net.Sockets;
+using System.Threading;
+using UnityEngine;
+
+public class JavaClient : MonoBehaviour
+{
+    public GameObject localPlayer;
+    public GameObject remotePlayer;
+
+    TcpClient client;
+    StreamWriter writer;
+    StreamReader reader;
+    Thread receiveThread;
+    bool keepReading = true;
+
+    void Start()
+    {
+        try
+        {
+            Debug.Log("📡 Connecting to Java server...");
+            client = new TcpClient("127.0.0.1", 5555); // same port as Java server
+            NetworkStream stream = client.GetStream();
+            writer = new StreamWriter(stream);
+            reader = new StreamReader(stream);
+
+            receiveThread = new Thread(ReceiveData);
+            receiveThread.Start();
+
+            Debug.Log("✅ Connected to server!");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError("❌ Connection failed: " + e.Message);
+        }
+    }
+
+    void Update()
+    {
+        if (client != null && client.Connected && writer != null)
+        {
+            Vector3 pos = localPlayer.transform.position;
+            string message = pos.x + "," + pos.y + "," + pos.z;
+            writer.WriteLine(message);
+            writer.Flush();
+        }
+    }
+
+    void ReceiveData()
+    {
+        while (keepReading)
+        {
+            try
+            {
+                string data = reader.ReadLine();
+                if (data != null)
+                {
+                    Debug.Log("📨 Received from server: " + data);
+                    string[] parts = data.Split(',');
+                    if (parts.Length == 3)
+                    {
+                        float x = float.Parse(parts[0]);
+                        float y = float.Parse(parts[1]);
+                        float z = float.Parse(parts[2]);
+                        Vector3 remotePos = new Vector3(x, y, z);
+
+                        // Switch back to main thread to move Unity object
+                        UnityMainThreadDispatcher.Instance().Enqueue(() => {
+                            remotePlayer.transform.position = remotePos;
+                        });
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                if (keepReading)
+                    Debug.LogError("❌ Error in receive thread: " + e.Message);
+                break;
+            }
+        }
+    }
+
+    void OnApplicationQuit()
+    {
+        keepReading = false;
+        Thread.Sleep(100);
+        receiveThread?.Join();
+
+        writer?.Close();
+        reader?.Close();
+        client?.Close();
+    }
+}
